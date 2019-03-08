@@ -29,11 +29,27 @@
 package gr.gousiosg.javacg.stat;
 
 import org.apache.bcel.classfile.JavaClass;
-import org.apache.bcel.generic.*;
+import org.apache.bcel.classfile.Method;
+import org.apache.bcel.generic.ConstantPoolGen;
+import org.apache.bcel.generic.ConstantPushInstruction;
+import org.apache.bcel.generic.EmptyVisitor;
+import org.apache.bcel.generic.INVOKEDYNAMIC;
+import org.apache.bcel.generic.INVOKEINTERFACE;
+import org.apache.bcel.generic.INVOKESPECIAL;
+import org.apache.bcel.generic.INVOKESTATIC;
+import org.apache.bcel.generic.INVOKEVIRTUAL;
+import org.apache.bcel.generic.Instruction;
+import org.apache.bcel.generic.InstructionConst;
+import org.apache.bcel.generic.InstructionHandle;
+import org.apache.bcel.generic.InvokeInstruction;
+import org.apache.bcel.generic.MethodGen;
+import org.apache.bcel.generic.ReturnInstruction;
+import org.apache.bcel.generic.Type;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import gr.gousiosg.javacg.info.CallType;
+import gr.gousiosg.javacg.info.MethodCall;
+import gr.gousiosg.javacg.info.MethodInfo;
+import gr.gousiosg.javacg.util.Filter;
 
 /**
  * The simplest of method visitors, prints any invoked method
@@ -43,20 +59,46 @@ import java.util.List;
  */
 public class MethodVisitor extends EmptyVisitor {
 
-    JavaClass visitedClass;
+    private JavaClass clazz;
+    private ConstantPoolGen constants;
+    private Method method;
     private MethodGen mg;
-    private ConstantPoolGen cp;
-    private String format;
-    private List<String> methodCalls = new ArrayList<>();
+    private Filter filter;
+    private MethodInfo mi = new MethodInfo();
 
-    public MethodVisitor(MethodGen m, JavaClass jc) {
-        visitedClass = jc;
-        mg = m;
-        cp = mg.getConstantPool();
-        format = "M:" + visitedClass.getClassName() + ":" + mg.getName() + "(" + argumentList(mg.getArgumentTypes()) + ")"
-            + " " + "(%s)%s:%s(%s)";
+    public MethodVisitor(JavaClass clazz, ConstantPoolGen constants, Method method, Filter filter) {
+    	this.clazz = clazz;
+    	this.constants = constants;
+    	this.method = method;
+    	this.filter = filter;
+    	this.mg = new  MethodGen(method, clazz.getClassName(), constants);
+	}
+
+    public MethodInfo start() {
+
+    	mi.setName(method.getName());
+    	mi.setSignature(method.getSignature());
+    	
+        if (mg.isAbstract() || mg.isNative()) return mi;
+
+        for (InstructionHandle ih = mg.getInstructionList().getStart(); 
+                ih != null; ih = ih.getNext()) {
+            Instruction i = ih.getInstruction();
+            
+            if (!visitInstruction(i))
+                i.accept(this);
+        }
+        
+        return mi;
     }
 
+    private boolean visitInstruction(Instruction i) {
+        short opcode = i.getOpcode();
+        return ((InstructionConst.getInstruction(opcode) != null)
+                && !(i instanceof ConstantPushInstruction) 
+                && !(i instanceof ReturnInstruction));
+    }
+    
     private String argumentList(Type[] arguments) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < arguments.length; i++) {
@@ -67,51 +109,51 @@ public class MethodVisitor extends EmptyVisitor {
         }
         return sb.toString();
     }
+    
 
-    public List<String> start() {
-        if (mg.isAbstract() || mg.isNative())
-            return Collections.emptyList();
-
-        for (InstructionHandle ih = mg.getInstructionList().getStart(); 
-                ih != null; ih = ih.getNext()) {
-            Instruction i = ih.getInstruction();
-            
-            if (!visitInstruction(i))
-                i.accept(this);
-        }
-        return methodCalls;
+    private void visitInternal(CallType ct, InvokeInstruction i) {
+    	
+    	String callee = i.getReferenceType(constants).toString();
+    	
+    	if(!filter.accept(callee)) {
+    		return;
+    	}
+    	if(!filter.include(callee)) {
+    		return;
+    	}
+    	
+    	MethodCall mc = new MethodCall();
+    	mc.setCaller(clazz.getClassName());
+    	mc.setCallerMethod(method.getName());
+    	mc.setCallee(i.getReferenceType(constants).toString());
+    	mc.setCalleeMethod(i.getMethodName(constants));
+    	mc.setArgumentSignature(argumentList(i.getArgumentTypes(constants)));
+    	mi.addCall(mc);
+    	
     }
-
-    private boolean visitInstruction(Instruction i) {
-        short opcode = i.getOpcode();
-        return ((InstructionConst.getInstruction(opcode) != null)
-                && !(i instanceof ConstantPushInstruction) 
-                && !(i instanceof ReturnInstruction));
-    }
-
+    
     @Override
     public void visitINVOKEVIRTUAL(INVOKEVIRTUAL i) {
-        methodCalls.add(String.format(format,"M",i.getReferenceType(cp),i.getMethodName(cp),argumentList(i.getArgumentTypes(cp))));
+    	visitInternal(CallType.invokevirtual, i);
     }
 
     @Override
     public void visitINVOKEINTERFACE(INVOKEINTERFACE i) {
-        methodCalls.add(String.format(format,"I",i.getReferenceType(cp),i.getMethodName(cp),argumentList(i.getArgumentTypes(cp))));
+    	visitInternal(CallType.invokeinterface, i);
     }
 
     @Override
     public void visitINVOKESPECIAL(INVOKESPECIAL i) {
-        methodCalls.add(String.format(format,"O",i.getReferenceType(cp),i.getMethodName(cp),argumentList(i.getArgumentTypes(cp))));
+    	visitInternal(CallType.invokespecial, i);
     }
 
     @Override
     public void visitINVOKESTATIC(INVOKESTATIC i) {
-        methodCalls.add(String.format(format,"S",i.getReferenceType(cp),i.getMethodName(cp),argumentList(i.getArgumentTypes(cp))));
+    	visitInternal(CallType.invokestatic, i);
     }
 
     @Override
     public void visitINVOKEDYNAMIC(INVOKEDYNAMIC i) {
-        methodCalls.add(String.format(format,"D",i.getType(cp),i.getMethodName(cp),
-                argumentList(i.getArgumentTypes(cp))));
+    	visitInternal(CallType.invokedynamic, i);
     }
 }

@@ -14,6 +14,7 @@
       <unpack>true</unpack>
       <includes>
         <include>org.apache.bcel:bcel</include>
+        <include>com.fasterxml.jackson.core:*</include>
       </includes>
       <scope>provided</scope>
     </dependencySet>

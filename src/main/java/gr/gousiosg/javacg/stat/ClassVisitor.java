@@ -28,16 +28,20 @@
 
 package gr.gousiosg.javacg.stat;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.TreeSet;
+
 import org.apache.bcel.classfile.Constant;
 import org.apache.bcel.classfile.ConstantPool;
 import org.apache.bcel.classfile.EmptyVisitor;
 import org.apache.bcel.classfile.JavaClass;
 import org.apache.bcel.classfile.Method;
 import org.apache.bcel.generic.ConstantPoolGen;
-import org.apache.bcel.generic.MethodGen;
 
-import java.util.ArrayList;
-import java.util.List;
+import gr.gousiosg.javacg.info.ClassInfo;
+import gr.gousiosg.javacg.info.MethodInfo;
+import gr.gousiosg.javacg.util.Filter;
 
 /**
  * The simplest of class visitors, invokes the method visitor class for each
@@ -46,15 +50,16 @@ import java.util.List;
 public class ClassVisitor extends EmptyVisitor {
 
     private JavaClass clazz;
+    private Filter filter;
     private ConstantPoolGen constants;
-    private String classReferenceFormat;
     private final DynamicCallManager DCManager = new DynamicCallManager();
-    private List<String> methodCalls = new ArrayList<>();
+    private ClassInfo info;
+    
 
-    public ClassVisitor(JavaClass jc) {
-        clazz = jc;
+    public ClassVisitor(JavaClass clazz, Filter filter) {
+        this.clazz = clazz;
+        this.filter = filter;
         constants = new ConstantPoolGen(clazz.getConstantPool());
-        classReferenceFormat = "C:" + clazz.getClassName() + " %s";
     }
 
     public void visitJavaClass(JavaClass jc) {
@@ -65,35 +70,45 @@ public class ClassVisitor extends EmptyVisitor {
             DCManager.retrieveCalls(method, jc);
             DCManager.linkCalls(method);
             method.accept(this);
-
-        }
-    }
-
-    public void visitConstantPool(ConstantPool constantPool) {
-        for (int i = 0; i < constantPool.getLength(); i++) {
-            Constant constant = constantPool.getConstant(i);
-            if (constant == null)
-                continue;
-            if (constant.getTag() == 7) {
-                String referencedClass = 
-                    constantPool.constantToString(constant);
-                System.out.println(String.format(classReferenceFormat, referencedClass));
-            }
         }
     }
 
     public void visitMethod(Method method) {
-        MethodGen mg = new MethodGen(method, clazz.getClassName(), constants);
-        MethodVisitor visitor = new MethodVisitor(mg, clazz);
-        methodCalls.addAll(visitor.start());
+    	MethodVisitor visitor = new MethodVisitor(clazz, constants, method, filter);
+    	info.addMethod(visitor.start());
     }
 
-    public ClassVisitor start() {
+    public ClassInfo start() {
+    	info = new ClassInfo();
+    	info.setClassname(clazz.getClassName());
+    	info.setSuperclasses(resolveSuper(clazz));
         visitJavaClass(clazz);
-        return this;
+        return info;
     }
 
-    public List<String> methodCalls() {
-        return this.methodCalls;
+    
+    public List<String> resolveSuper(JavaClass in) {
+
+    	List<String> out = new ArrayList<String>();
+    	
+    	out.add(in.getSuperclassName());
+    	
+    	for(String i : in.getInterfaceNames()) {
+    		out.add(i);
+    	}
+
+    	TreeSet<String> x = new TreeSet<String>();
+    	for(String n : out) {
+    		if(filter.accept(n) && filter.include(n)) {
+    			x.add(n);
+    			try {
+					x.addAll(resolveSuper(in.getRepository().findClass(n)));
+				} catch (Exception e) {
+				}
+    		}
+    	}
+    	
+    	return new ArrayList<>(x);
     }
+    
 }
